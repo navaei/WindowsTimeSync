@@ -9,7 +9,7 @@ namespace WindowsTimeSync
         public string client_ip { get; set; }
         public DateTime datetime { get; set; }
     }
-
+    
     public class InternetTimeZone
     {
         public string status { get; set; }
@@ -28,5 +28,4 @@ namespace WindowsTimeSync
         public int timestamp { get; set; }
         public string formatted { get; set; }
     }
-
 }
