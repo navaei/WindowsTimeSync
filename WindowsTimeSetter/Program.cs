@@ -1,4 +1,4 @@
-using Microsoft.VisualBasic;
+﻿using Microsoft.VisualBasic;
 using System;
 using System.Diagnostics;
 using System.Linq;
@@ -14,24 +14,33 @@ namespace WindowsTimeSync
         const string lat = "35.6944";
         const string lng = "51.4215";
         const string apiKey = "V2ZJELAQIGBW";
-        static System.Timers.Timer timer = new System.Timers.Timer(90000);
+        static System.Timers.Timer timer = new System.Timers.Timer(77000);
+        private static bool onlyTimeDotIR = true;
 
         static void Main(string[] args)
         {
             Console.WriteLine("Starting...");
-
             string localZone = defaultZone;
             if (args.Any())
                 localZone = args[0].Trim();
 
-            if (string.IsNullOrEmpty(lat))
+            if (onlyTimeDotIR && localZone == "Asia/Tehran")
+            {
+                timer.Elapsed += (object sender, System.Timers.ElapsedEventArgs e) => SetTimeByTimeIR();
+            }
+            else if (string.IsNullOrEmpty(lat))
+            {
                 timer.Elapsed += (object sender, System.Timers.ElapsedEventArgs e) => SetTimeByWorldTimeApi(localZone);
+            }
             else
+            {
                 timer.Elapsed += (object sender, System.Timers.ElapsedEventArgs e) =>
                 {
                     if (!SetTimeByTimeZonedb(localZone, lat, lng))
                         SetTimeByKeybit(localZone);
                 };
+            }
+
             timer.Start();
 
             Console.ReadKey();
@@ -165,6 +174,89 @@ namespace WindowsTimeSync
 
                 return false;
 
+            }
+        }
+
+        private static bool SetTimeByTimeIR()
+        {
+            try
+            {
+                var localDate = DateTime.Now;
+
+                var stopWatch = new Stopwatch();
+                stopWatch.Start();
+
+                using var udp = new System.Net.Sockets.UdpClient();
+                udp.Client.ReceiveTimeout = 3000;
+
+                var ntpData = new byte[48];
+                ntpData[0] = 0x1B;
+
+                var addresses = System.Net.Dns.GetHostEntry("ntp.time.ir").AddressList;
+                var endPoint = new System.Net.IPEndPoint(addresses[0], 123);
+
+                udp.Send(ntpData, ntpData.Length, endPoint);
+
+                var remoteEndPoint = endPoint;
+                var response = udp.Receive(ref remoteEndPoint);
+
+                stopWatch.Stop();
+
+                if (stopWatch.Elapsed.TotalSeconds > 2)
+                {
+                    Console.WriteLine("so slowly! " + stopWatch.Elapsed.TotalSeconds);
+                    return false;
+                }
+
+                ulong intPart = ((ulong)response[40] << 24) |
+                                ((ulong)response[41] << 16) |
+                                ((ulong)response[42] << 8) |
+                                response[43];
+
+                ulong fractPart = ((ulong)response[44] << 24) |
+                                  ((ulong)response[45] << 16) |
+                                  ((ulong)response[46] << 8) |
+                                  response[47];
+
+                var milliseconds = (long)((intPart * 1000) +
+                                          ((fractPart * 1000) / 0x100000000L));
+
+                var serverUtc = new DateTime(
+                    1900, 1, 1, 0, 0, 0, DateTimeKind.Utc
+                ).AddMilliseconds(milliseconds);
+
+                var serverLocal = serverUtc.ToLocalTime();
+
+                // کمی compensation برای latency
+                localDate = localDate.AddMilliseconds(-300);
+
+                if (Math.Abs(serverLocal.Subtract(localDate).TotalSeconds) > 4)
+                {
+                    WinDateTime.SetDateTime(serverLocal, defaultZone);
+
+                    Console.WriteLine(
+                        DateTime.Now.ToString("t") +
+                        ": Set correct time: " +
+                        serverLocal.ToString("t"));
+                }
+                else
+                {
+                    Console.WriteLine(DateTime.Now.ToString("t") + " No changes detected");
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+
+                if (ex.Message.Contains("A required privilege is not held by the client"))
+                {
+                    Console.WriteLine("\n---------\nPlease run program as administrator\n");
+                    timer.Stop();
+                }
+
+                return false;
             }
         }
 
